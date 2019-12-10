@@ -1,0 +1,123 @@
+---
+- hosts: 192.168.7.248
+  become_method: runas
+
+  vars:
+    ansible_become_password: #fill this local admin password
+
+  tasks:
+  - name: Change the hostname
+    win_hostname:
+      name: "" #fill this "hostname" to change
+    register: res_changehostname
+
+  - name: Reboot
+    win_reboot:
+    when: res_changehostname.reboot_required
+
+  - name: Set a single address on the adapter named Ethernet
+    win_dns_client:
+      adapter_names: Ethernet
+      ipv4_addresses: 192.168.7.1
+
+  - name: Join host to domain
+    win_domain_membership:
+      dns_domain_name: #fill this your domain.net
+      domain_admin_user: #your domain creds(must have use vault or same file, which not public)
+      domain_admin_password: #your domain creds(must have use vault or same file, which not public)
+      state: domain
+    register: pri_domain_join_result
+
+  - name: Reboot
+    win_reboot:
+    when: pri_domain_join_result.reboot_required
+
+  - name: Set a single address on the adapter named Ethernet
+    win_dns_client:
+      adapter_names: Ethernet
+      ipv4_addresses:
+      - 192.168.7.1
+      - 192.168.7.254
+
+  - name: Copy Activation script
+    win_copy:
+      src: /home/administrator/shit_ansible/playbooks/activate_win10.ps1
+      dest: C:\
+
+  - name: Activate Windows 10
+    win_shell: C:\activate_win10.ps1 >> C:\log.txt
+    become: yes
+    become_user: Администратор
+
+  - name: Add Techsupport to admins group
+    win_group_membership:
+      name: Администраторы
+      members:
+        - #fill your domain andmins group, like DOMAIN.NET\ADMINS
+      state: present
+
+  - name: Preinstall SMB1
+    win_optional_feature:
+      name:
+      - SMB1Protocol
+      state: present
+    win_optional_feature:
+      name:
+      - SMB1Protocol-Deprecation
+      state: absent
+    become: yes
+    become_user: Администратор
+    register: smb_status
+
+  - name: Install SMB1
+    win_optional_feature:
+      name:
+      - SMB1Protocol
+      state: present
+    win_optional_feature:
+      name:
+      - SMB1Protocol-Deprecation
+      state: absent
+    become: yes
+    become_user: Администратор
+    register: smb_status
+
+  - name: Reboot after install SMB
+    win_reboot:
+    when: smb_status.reboot_required
+
+  - name: WinRM QuickConfig quiet
+    win_shell: winrm quickconfig -quiet
+
+  - name: Copy UltraVNC folder to Program Files
+    win_copy:
+      src: /home/administrator/UltraVNC
+      dest: 'C:\Program Files'
+
+  - name: Install UltraVNC
+    win_shell: '"C:\Program Files\UltraVNC\install.cmd"'
+    args:
+      executable: cmd
+      chdir: 'C:\Program Files\UltraVNC'
+    become: yes
+    become_user: Администратор
+
+  - name: Firewall rule to allow UVNC on TCP port 5900
+    win_firewall_rule:
+      name: UltraVNC
+      localport: 5900
+      action: allow
+      direction: in
+      protocol: tcp
+      state: present
+      enabled: yes
+
+  - name: Firewall rule to allow SMB on port 445
+    win_firewall_rule:
+      name: SMB
+      localport: 445
+      action: allow
+      direction: in
+      protocol: tcp
+      state: present
+      enabled: yes
